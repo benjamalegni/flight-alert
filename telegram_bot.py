@@ -7,6 +7,7 @@ import subprocess
 PRICE_THRESHOLD = 300.00  # USD
 import os
 import logging
+import re # For input validation
 
 # --- Library Installation ---
 def install_telegram_bot_library():
@@ -31,7 +32,8 @@ install_telegram_bot_library()
 try:
     from telegram import Update
     from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-    from flight_api_client import search_flights_api # Assuming flight_api_client.py is in the same directory
+    # Assuming flight_api_client.py is in the same directory
+    from flight_api_client import search_flights_api, find_cheapest_flights_in_month
 except ImportError:
     print("Failed to import necessary libraries after installation attempt.")
     print("Please ensure 'python-telegram-bot' is installed and 'flight_api_client.py' is accessible.")
@@ -210,11 +212,114 @@ async def set_threshold_command_handler(update: Update, context: ContextTypes.DE
         await update.message.reply_text("Invalid amount. Please provide a number for the threshold (e.g., 250 or 199.99).")
         logger.warning(f"User {update.effective_user.id} provided invalid threshold value: {args[0]}")
 
+async def search_month_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles the /searchmonth command.
+    Expected format: /searchmonth ORIGIN DESTINATION YYYY-MM
+    """
+    logger.info(f"Received /searchmonth command from user {update.effective_user.name if update.effective_user else 'Unknown'}")
+    args = context.args
+
+    if not args or len(args) != 3:
+        usage_message = "Usage: /searchmonth <OriginCode> <DestinationCode> <YYYY-MM>"
+        await update.message.reply_text(usage_message)
+        logger.warning(f"Invalid /searchmonth usage: {args}")
+        return
+
+    origin, destination, year_month_str = args[0].upper(), args[1].upper(), args[2]
+
+    # Validation for airport codes and year_month_str
+    if not (len(origin) == 3 and origin.isalpha()):
+        await update.message.reply_text("Invalid Origin Airport Code. Must be 3 alphabetic characters (e.g., JFK).")
+        logger.warning(f"Invalid origin code: {origin}")
+        return
+    if not (len(destination) == 3 and destination.isalpha()):
+        await update.message.reply_text("Invalid Destination Airport Code. Must be 3 alphabetic characters (e.g., LAX).")
+        logger.warning(f"Invalid destination code: {destination}")
+        return
+    if not re.match(r"^\d{4}-\d{2}$", year_month_str):
+        await update.message.reply_text("Invalid Year-Month format. Please use YYYY-MM (e.g., 2024-12).")
+        logger.warning(f"Invalid year-month format: {year_month_str}")
+        return
+
+    await update.message.reply_text(
+        f"Searching for the cheapest flights from {origin} to {destination} in {year_month_str}... "
+        "This may take a minute or two, as I'm checking every day of the month."
+    )
+    logger.info(f"Calling find_cheapest_flights_in_month with: O={origin}, D={destination}, Month={year_month_str}")
+
+    try:
+        # This function is expected to be synchronous in flight_api_client for now.
+        # If it were async, we'd await it.
+        cheapest_flights = find_cheapest_flights_in_month(origin, destination, year_month_str)
+    except Exception as e:
+        logger.error(f"Error calling find_cheapest_flights_in_month: {e}", exc_info=True)
+        await update.message.reply_text("An internal error occurred while searching for the cheapest flights.")
+        return
+
+    if not cheapest_flights: # Handles None or empty list
+        await update.message.reply_text(f"No flights found for {origin} to {destination} in {year_month_str}.")
+        logger.info(f"No cheapest flights found by API for O={origin}, D={destination}, Month={year_month_str}")
+        return
+
+    # Construct and send the message for cheapest flights
+    # Assuming cheapest_flights is a list of flight dicts, each including 'price' and 'date'
+    min_price = cheapest_flights[0].get('price') # All flights in this list should have the same price
+
+    response_message = (
+        f"🎉 Hooray! The cheapest price found for {origin} to {destination} in {year_month_str} is ${min_price:.2f}.\n"
+        f"Here are the flight(s) at this price:\n\n"
+    )
+
+    logger.info(f"Found {len(cheapest_flights)} cheapest flights for O={origin}, D={destination}, Month={year_month_str} at price ${min_price:.2f}")
+
+    message_parts = []
+    for flight in cheapest_flights:
+        flight_detail = (
+            f"🗓️ Date: {flight.get('date', 'N/A')}\n"
+            f"✈️ Airline: {flight.get('airline', 'N/A')}\n"
+            f"   Flight No: {flight.get('flight_number', 'N/A')}\n"
+            f"   Price: ${flight.get('price', 0.0):.2f}\n" # Should be min_price
+            f"   Departs: {flight.get('departure_time', 'N/A')}"
+        )
+        message_parts.append(flight_detail)
+
+    # Combine details into messages, respecting Telegram message length limits
+    current_message = response_message
+    for i, part in enumerate(message_parts):
+        if len(current_message) + len(part) + 2 > 4096: # Telegram message length limit
+            await update.message.reply_text(current_message)
+            current_message = part + "\n\n"
+        else:
+            current_message += part + "\n\n"
+
+        # Safety break if there are too many flights to list to avoid spamming (e.g., > 10 messages)
+        if i > 28 and len(message_parts) > 30 : # Approx 3 flights per message, limit to ~10 messages
+             current_message += f"...and {len(message_parts) - (i+1)} more similar flights."
+             break
+
+
+    if current_message: # Send any remaining part
+        await update.message.reply_text(current_message)
+
+
 # --- Message Handlers ---
 async def echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles non-command text messages."""
-    logger.info(f"Received non-command message from user {update.effective_user.name if update.effective_user else 'Unknown'}")
-    await update.message.reply_text("I'm a simple flight bot. Please use /search <Origin> <Destination> <YYYY-MM-DD> to find flights.")
+    """Handles non-command text messages by providing usage instructions."""
+    logger.info(f"Received non-command message from user {update.effective_user.name if update.effective_user else 'Unknown'}. Replying with help text.")
+    help_text = (
+        "I'm a flight bot. Here's how to use me:\n"
+        "  - `/search <Origin> <Destination> <YYYY-MM-DD>`\n"
+        "    (Example: /search JFK LAX 2024-12-24)\n"
+        "    Searches for flights on a specific date.\n\n"
+        "  - `/searchmonth <Origin> <Destination> <YYYY-MM>`\n"
+        "    (Example: /searchmonth JFK LAX 2024-12)\n"
+        "    Finds the cheapest flights in a specific month.\n\n"
+        "  - `/setthreshold <amount>`\n"
+        "    (Example: /setthreshold 250.50)\n"
+        "    Sets your price alert threshold for the /search command."
+    )
+    await update.message.reply_text(help_text)
 
 # --- Main Bot Logic ---
 def main():
@@ -232,6 +337,8 @@ def main():
     logger.info("/search command handler registered.")
     application.add_handler(CommandHandler("setthreshold", set_threshold_command_handler))
     logger.info("/setthreshold command handler registered.")
+    application.add_handler(CommandHandler("searchmonth", search_month_command_handler))
+    logger.info("/searchmonth command handler registered.")
 
     # Register message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_handler))
