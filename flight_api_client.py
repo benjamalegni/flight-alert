@@ -1,15 +1,15 @@
 # flight_api_client.py
-# This script is designed to interact with a (currently fictional) flight data API
+# This script is designed to interact with the SerpApi Google Flights API
 # to search for flights and retrieve information.
-# It includes error handling and uses a mocked API response for development and testing.
 
-import requests
-import json
+import os
+import calendar
+from datetime import datetime, timedelta
+from serpapi import SerpApiClient, serp_api_client_exception
 
 def search_flights_api(origin_airport_code, destination_airport_code, search_date):
     """
-    Searches for flights using a fictional API for a given origin, destination, and date.
-    Includes a mocked response for development as the API is not real.
+    Searches for flights using the SerpApi Google Flights API.
 
     Args:
         origin_airport_code (str): The IATA code for the origin airport (e.g., "EZE").
@@ -17,95 +17,219 @@ def search_flights_api(origin_airport_code, destination_airport_code, search_dat
         search_date (str): The date of the flight in YYYY-MM-DD format (e.g., "2024-12-01").
 
     Returns:
-        list: A list of flight dictionaries, or None if an error occurs.
+        list: A list of flight dictionaries, or an empty list if an error occurs or no flights are found.
     """
-    base_api_url = "https://sky-scrapper.p.rapidapi.com/api/v1/flights/getFlightDetails?legs=%5B%7B%22destination%22%3A%22LOND%22%2C%22origin%22%3A%22LAXA%22%2C%22date%22%3A%222024-04-11%22%7D%5D&adults=1&currency=USD&locale=en-US&market=en-US&cabinClass=economy&countryCode=US" # Fictional API
+    api_key = os.getenv("SERPAPI_KEY")
+    if not api_key:
+        print("Error: SERPAPI_KEY environment variable not found.")
+        return []
+
     params = {
-        'origin': origin_airport_code,
-        'destination': destination_airport_code,
-        'date': search_date
+        "engine": "google_flights",
+        "departure_id": origin_airport_code,
+        "arrival_id": destination_airport_code,
+        "outbound_date": search_date,
+        "api_key": api_key,
+        "currency": "USD",  # Optional: specify currency
+        "hl": "en"          # Optional: specify language
     }
 
-    flights_data = None
-    print(f"Attempting to search flights from API: {base_api_url} with params: {params}")
+    print(f"Attempting to search flights using SerpApi with params: {params}")
 
     try:
-        # This request will likely fail as the URL is fictional.
-        # response = requests.get(base_api_url, params=params, timeout=10)
-        # response.raise_for_status()  # Raises an HTTPError for bad responses (4XX or 5XX)
-        # flights_data_raw = response.json() # If the request was successful
+        client = SerpApiClient(params)
+        results = client.get_dict()
 
-        # Simulating a failure to trigger mock response
-        raise requests.exceptions.ConnectionError("Simulated connection error to fictional API.")
+        if "error" in results:
+            print(f"SerpApi Error: {results['error']}")
+            return []
 
-    except requests.exceptions.RequestException as e:
-        print(f"API Request failed: {e}")
-        print("Using mocked API response for demonstration.")
+        processed_flights = []
+        # SerpApi typically returns flight data in 'best_flights' or 'other_flights'
+        flight_categories = ["best_flights", "other_flights"]
 
-        # Sample JSON response (as a Python dictionary/list structure)
-        mock_response_data = [
-            {"airline": "Fantasy Air", "price": 250.00, "departure_time": "10:00", "flight_number": "FA101"},
-            {"airline": "Dream Flights", "price": 280.50, "departure_time": "12:30", "flight_number": "DF202"},
-            {"airline": "Sky High", "price": 220.75, "departure_time": "15:00", "flight_number": "SH303"},
-            {"airline": "Fantasy Air", "price": 260.00, "departure_time": "18:00", "flight_number": "FA105"}
-        ]
-        # In a real scenario where mock_response_data was a JSON string:
-        # mock_response_json_str = """
-        # [
-        #   {"airline": "Fantasy Air", "price": 250.00, "departure_time": "10:00"},
-        #   {"airline": "Dream Flights", "price": 280.50, "departure_time": "12:30"},
-        #   {"airline": "Sky High", "price": 220.75, "departure_time": "15:00"}
-        # ]
-        # """
-        # try:
-        #     flights_data = json.loads(mock_response_json_str)
-        # except json.JSONDecodeError as je:
-        #     print(f"Error decoding mocked JSON response: {je}")
-        #     return None
+        for category in flight_categories:
+            if category in results and results[category]:
+                for flight_info in results[category]:
+                    # Ensure 'flights' key exists and is a list
+                    if "flights" in flight_info and isinstance(flight_info["flights"], list) and flight_info["flights"]:
+                        first_leg = flight_info["flights"][0] # Assuming we are interested in the first leg for simplicity
+                        flight_data = {
+                            "airline": first_leg.get("airline"),
+                            "flight_number": first_leg.get("flight_number"),
+                            "price": flight_info.get("price"), # Price is usually at the top level of the flight offer
+                            "departure_time": first_leg.get("departure_airport", {}).get("time")
+                        }
+                        processed_flights.append(flight_data)
+                    elif not flight_info.get("flights") : # Handle cases where a flight offer might not have detailed flight legs (e.g. summarized offers)
+                        flight_data = {
+                             "airline": flight_info.get("airline_logo"), # Or some other identifier if airline name is not directly available
+                             "flight_number": None, # Flight number might not be available in summarized offers
+                             "price": flight_info.get("price"),
+                             "departure_time": None # Departure time might not be available
+                        }
+                        # Add only if there's a price, to avoid adding empty entries if parsing fails for some offers
+                        if flight_data["price"]:
+                             processed_flights.append(flight_data)
 
-        # Since mock_response_data is already a Python list of dicts, we can use it directly
-        flights_data = mock_response_data
 
-    # This block would be for handling a real response's JSON parsing,
-    # but here we've already assigned flights_data from the mock.
-    # If flights_data_raw was populated from a real response:
-    # try:
-    #     flights_data = flights_data_raw # Assuming it's already a dictionary/list from response.json()
-    # except json.JSONDecodeError as je:
-    #     print(f"Error decoding API JSON response: {je}")
-    #     return None
-    # except Exception as ex: # Other potential errors with the response
-    #     print(f"An unexpected error occurred processing the response: {ex}")
-    #     return None
+        if not processed_flights and "message" in results: # Check for messages like "No flights found"
+            print(f"SerpApi Message: {results['message']}")
 
-    if flights_data is not None:
-        print("Successfully processed flight data (mocked).")
-        return flights_data
-    else:
-        print("No flight data was processed.")
-        return [] # Return empty list on failure to process/get data
+        if processed_flights:
+            print(f"Successfully processed {len(processed_flights)} flights from SerpApi.")
+            return processed_flights
+        else:
+            print("No flight data found in SerpApi response or failed to parse.")
+            return []
+
+    except serp_api_client_exception as e:
+        print(f"SerpApi Client Error: {e}")
+        return []
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return []
+
+def find_cheapest_flights_in_month(origin_airport_code, destination_airport_code, year_month_str):
+    """
+    Finds the cheapest flight(s) in a given month by checking each day.
+
+    Args:
+        origin_airport_code (str): The IATA code for the origin airport.
+        destination_airport_code (str): The IATA code for the destination airport.
+        year_month_str (str): The month to search in "YYYY-MM" format.
+
+    Returns:
+        list: A list of the cheapest flight dictionaries found, including their date.
+              Returns an empty list if no flights are found or an error occurs.
+    """
+    try:
+        year, month = map(int, year_month_str.split('-'))
+    except ValueError:
+        print(f"Error: Invalid year_month_str format: {year_month_str}. Please use YYYY-MM.")
+        return []
+
+    num_days = calendar.monthrange(year, month)[1]
+    all_flights_for_month = []
+
+    print(f"\nSearching for all flights in {year_month_str} from {origin_airport_code} to {destination_airport_code}...")
+
+    for day in range(1, num_days + 1):
+        current_date_str = f"{year:04d}-{month:02d}-{day:02d}"
+        print(f"Searching flights for {current_date_str}...")
+
+        # Ensure SERPAPI_KEY is checked within the loop or rely on search_flights_api to handle it
+        # For this implementation, we rely on search_flights_api's existing check.
+        daily_flights = search_flights_api(origin_airport_code, destination_airport_code, current_date_str)
+
+        if daily_flights: # search_flights_api returns [] on error or no flights
+            for flight in daily_flights:
+                # Ensure flight is a dictionary and has a 'price' before augmenting
+                if isinstance(flight, dict) and 'price' in flight and flight['price'] is not None:
+                    augmented_flight = flight.copy()
+                    augmented_flight['date'] = current_date_str
+                    all_flights_for_month.append(augmented_flight)
+                # else:
+                #     print(f"Debug: Skipping flight due to missing price or incorrect format: {flight}")
+
+
+    if not all_flights_for_month:
+        print(f"No flights found for {year_month_str} from {origin_airport_code} to {destination_airport_code}.")
+        return []
+
+    # Filter out flights without a valid price before finding the minimum
+    valid_flights_with_price = [f for f in all_flights_for_month if isinstance(f.get('price'), (int, float))]
+
+    if not valid_flights_with_price:
+        print(f"No flights with valid prices found for {year_month_str} from {origin_airport_code} to {destination_airport_code}.")
+        return []
+
+    min_price = min(f['price'] for f in valid_flights_with_price)
+    cheapest_flights = [f for f in valid_flights_with_price if f['price'] == min_price]
+
+    print(f"\nFound {len(cheapest_flights)} cheapest flight(s) with price ${min_price:.2f} for {year_month_str} from {origin_airport_code} to {destination_airport_code}.")
+    return cheapest_flights
 
 
 if __name__ == "__main__":
-    print("--- Starting Flight API Client ---")
-    origin = "EZE"
-    destination = "BCN"
-    travel_date = "2024-12-01"
+    print("--- Starting Flight API Client (SerpApi) ---")
+    # Example usage: Set your SERPAPI_KEY environment variable before running
+    # export SERPAPI_KEY="your_actual_serpapi_key"
 
-    print(f"\nSearching for flights: {origin} to {destination} on {travel_date}")
-    flights = search_flights_api(origin, destination, travel_date)
+    serpapi_key_present = bool(os.getenv("SERPAPI_KEY"))
+    if not serpapi_key_present:
+        print("\nWARNING: SERPAPI_KEY environment variable is not set.")
+        print("Please set it to your actual SerpApi key to test the API integration.")
+        print("Example: export SERPAPI_KEY=\"your_key_here\"")
+        print("\nProceeding with structural checks (no actual API calls will succeed without a key).")
 
-    if flights:
-        print(f"\n--- Found {len(flights)} flights (mocked data) ---")
-        for i, flight in enumerate(flights):
-            print(f"Flight #{i+1}:")
-            print(f"  Airline: {flight.get('airline', 'N/A')}")
-            print(f"  Flight Number: {flight.get('flight_number', 'N/A')}")
-            print(f"  Price: ${flight.get('price', 'N/A'):.2f}")
-            print(f"  Departure Time: {flight.get('departure_time', 'N/A')}")
-    elif flights == []: # Explicitly check for empty list from handled error
-        print("\nNo flights found or an error occurred, but it was handled (empty list returned).")
-    else: # Should not happen if function returns [] on error, but as a fallback
-        print("\nFailed to retrieve flight information (function returned None or other).")
+    # Test case 1: Standard search (existing test)
+    origin1 = "JFK"
+    destination1 = "LAX"
+    travel_date1 = "2024-07-15" # Using a past date for structure test if no key
 
-    print("\n--- Flight API Client Finished ---")
+    # Adjust travel_date if SERPAPI_KEY is present to a future date for better testing
+    if serpapi_key_present:
+        # Get tomorrow's date for a more likely successful search
+        tomorrow = datetime.now() + timedelta(days=1)
+        travel_date1 = tomorrow.strftime("%Y-%m-%d")
+
+
+    print(f"\n--- Test Case 1: Daily Flight Search ---")
+    print(f"Searching for flights: {origin1} to {destination1} on {travel_date1}")
+    flights_daily = search_flights_api(origin1, destination1, travel_date1)
+
+    if flights_daily:
+        print(f"\nFound {len(flights_daily)} flights for {travel_date1}:")
+        for i, flight in enumerate(flights_daily):
+            print(f"  Flight #{i+1}:")
+            print(f"    Airline: {flight.get('airline', 'N/A')}")
+            print(f"    Flight Number: {flight.get('flight_number', 'N/A')}")
+            price = flight.get('price', 'N/A')
+            if isinstance(price, (int, float)):
+                print(f"    Price: ${price:.2f}")
+            else:
+                print(f"    Price: {price}")
+            print(f"    Departure Time: {flight.get('departure_time', 'N/A')}")
+    else:
+        print(f"\nNo flights found for {travel_date1} or an error occurred.")
+
+    # Test case 2: Cheapest flight in a month
+    origin2 = "EZE" # Buenos Aires
+    destination2 = "BCN" # Barcelona
+    # Use a future month for testing if API key is present, otherwise a fixed one for structure check
+    search_month_str = "2025-12"
+    if serpapi_key_present:
+        # Example: Search for next month if key is present
+        next_month_date = datetime.now().replace(day=1) + timedelta(days=32) # Approx next month
+        search_month_str = next_month_date.strftime("%Y-%m")
+
+
+    print(f"\n--- Test Case 2: Cheapest Flights in Month ---")
+    print(f"Searching for cheapest flights from {origin2} to {destination2} in {search_month_str}")
+
+    # Since find_cheapest_flights_in_month calls search_flights_api multiple times,
+    # it will repeatedly print the SERPAPI_KEY error if not set.
+    # This is expected behavior based on the current structure.
+    cheapest_monthly_flights = find_cheapest_flights_in_month(origin2, destination2, search_month_str)
+
+    if cheapest_monthly_flights:
+        # The success message is printed within find_cheapest_flights_in_month
+        print(f"\nDetails of cheapest flights found in {search_month_str}:")
+        for i, flight in enumerate(cheapest_monthly_flights):
+            print(f"  Cheapest Flight Option #{i+1}:")
+            print(f"    Date: {flight.get('date', 'N/A')}")
+            print(f"    Airline: {flight.get('airline', 'N/A')}")
+            print(f"    Flight Number: {flight.get('flight_number', 'N/A')}")
+            price = flight.get('price', 'N/A')
+            if isinstance(price, (int, float)):
+                print(f"    Price: ${price:.2f}")
+            else:
+                print(f"    Price: {price}")
+            print(f"    Departure Time: {flight.get('departure_time', 'N/A')}")
+    # find_cheapest_flights_in_month prints its own "no flights found" message
+    elif not serpapi_key_present : # Add context if key is missing.
+        print(f"\nNote: No flights found for {search_month_str}, as expected without SERPAPI_KEY or if no flights available.")
+
+
+    print("\n--- Flight API Client (SerpApi) Finished ---")
