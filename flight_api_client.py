@@ -19,7 +19,7 @@ def search_flights_api(origin_airport_code, destination_airport_code, search_dat
     Returns:
         list: A list of flight dictionaries, or None if an error occurs.
     """
-    base_api_url = "https://api.exampleflightdata.com/search" # Fictional API
+    base_api_url = "https://sky-scrapper.p.rapidapi.com/api/v1/flights/getFlightDetails?legs=%5B%7B%22destination%22%3A%22LOND%22%2C%22origin%22%3A%22LAXA%22%2C%22date%22%3A%222024-04-11%22%7D%5D&adults=1&currency=USD&locale=en-US&market=en-US&cabinClass=economy&countryCode=US" # Fictional API
     params = {
         'origin': origin_airport_code,
         'destination': destination_airport_code,
