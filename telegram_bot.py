@@ -8,6 +8,9 @@ PRICE_THRESHOLD = 300.00  # USD
 import os
 import logging
 import re # For input validation
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- Library Installation ---
 def install_telegram_bot_library():

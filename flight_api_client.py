@@ -6,6 +6,10 @@ import os
 import calendar
 from datetime import datetime, timedelta
 from serpapi import SerpApiClient, serp_api_client_exception
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def search_flights_api(origin_airport_code, destination_airport_code, search_date):
     """
