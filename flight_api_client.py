@@ -5,7 +5,7 @@
 import os
 import calendar
 from datetime import datetime, timedelta
-from serpapi import SerpApiClient, serp_api_client_exception
+from serpapi import GoogleSearch, serp_api_client_exception
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,13 +35,14 @@ def search_flights_api(origin_airport_code, destination_airport_code, search_dat
         "outbound_date": search_date,
         "api_key": api_key,
         "currency": "USD",  # Optional: specify currency
-        "hl": "en"          # Optional: specify language
+        "hl": "en",         # Optional: specify language
+        "type": "2"         # Specify one-way trips
     }
 
     print(f"Attempting to search flights using SerpApi with params: {params}")
 
     try:
-        client = SerpApiClient(params)
+        client = GoogleSearch(params)
         results = client.get_dict()
 
         if "error" in results:
